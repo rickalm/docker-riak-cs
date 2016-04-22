@@ -1,0 +1,82 @@
+#! /bin/bash
+
+appname="serf"
+join_list=""
+scan_list=""
+log_level=info
+log_dir=/var/log/serf
+
+. ../.bash_functions
+
+mkdir -p ${log_dir} 2>/dev/null
+chown serf ${log_dir} 2>/dev/null
+
+rpc_port=${SERF_RPC_PORT:-7373}
+rpc_ip=${SERF_RPC_IP:-127.0.0.1}
+
+bind_port=${SERF_BIND_PORT:-7946}
+bind_ip=${SERF_BIND_IP:-0.0.0.0}
+
+# First set advertise_* vars based on Environment or default
+#
+advertise_port=${SERF_ADVERTISE_PORT:-${bind_port}}
+advertise_ip=${SERF_ADVERTISE_IP:-$(hostname -i | awk '{print $1}')}
+
+# Figure out the Docker_Host Port NAT if SERF_ADVERTISE_PORT not specified
+#
+if [ -z "${SERF_ADVERTISE_PORT}" ]; then
+  answer=$(get_docker_port_map ${bind_port})
+  advertise_port=${answer:-${advertise_port}}
+fi
+
+# Figure out the Docker_Host IP Address, and then add it to our default join list
+#
+answer=$(get_docker_port_bind_map ${bind_port})
+join_list="${join_list} -join=${answer}:${bind_port}"
+
+# Use Docker_host answer if SERF_ADVERTISE_IP not specified
+#
+if [ -z "${SERF_ADVERTISE_IP}" ]; then
+  advertise_ip=${answer:-${advertise_ip}}
+fi
+
+# If PORT_SCAN is enabled, use nmap to find our peers within our network
+# keep expanding the netmask till we find a peer that might want to talk to us
+# netmask cannot be smaller than 16
+#
+if [ -n "${PORT_SCAN}" ]; then
+  for answer in $( port_scan_network ${bind_port} ${PORT_SCAN_MASK} ); do
+    scan_list="${scan_list} -join=${answer}" 
+  done
+fi
+
+# If a JOIN_LIST was specified then add those nodes to the agent run command
+# Use nmap to see if its accepting connections, because if you attempt to join
+# a non-responding node, it causes issues
+#
+if [ -n "${SERF_JOIN_LIST}" ]; then
+  for host in $(echo ${SERF_JOIN_LIST} | tr ',' ' '); do
+    host_ip=$(echo ${host}: | cut -d: -f1)
+    host_port=$(echo ${host}: | cut -d: -f2)
+
+    for answer in $( port_scan_network ${host_port} 32 ${host_ip}); do
+      join_list="${join_list} -join=${answer}" 
+    done
+
+  done
+fi
+
+exec /sbin/setuser serf \
+  /usr/bin/serf agent \
+  ${scan_list} \
+  ${join_list} \
+  -node="${node_name}" \
+  -rpc-addr="${rpc_ip}:${rpc_port}" \
+  -bind="${bind_ip}:${bind_port}" \
+  -advertise="${advertise_ip}:${advertise_port}" \
+  -event-handler=/etc/service/serf/dispatcher.sh \
+  -snapshot=${log_dir}/snapshot.dat \
+  -tags-file=${log_dir}/tags.dat \
+  -log-level=${log_level} \
+  >>${log_dir}/serf.log 2>&1
+
