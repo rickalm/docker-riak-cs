@@ -1,11 +1,14 @@
-#! /bin/sh
+#! /bin/bash
 
 appname=stanchion
-log_dir=/var/log/${appname}
 
-. ../.bash_functions
+. /etc/.docker_functions
 
-IP_ADDRESS=$(ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1)
+stanchion_ip=${STANCHION_IP:-$(get_docker_container_nat_ip ${STANCHION_PORT:-8085})}
+stanchion_port=${STANCHION_PORT:-$(get_docker_container_nat_port ${STANCHION_PORT:-8085})}
+stanchion_name=${STANCHION_NAME:-stanchion}
+
+serf tags -set stanchion_connect=${stanchion_ip}:${stanchion_port}
 
 # Ensure correct ownership and permissions on volumes
 #
@@ -18,11 +21,13 @@ ulimit -n 4096
 
 # Ensure the Erlang node name is set correctly
 #
-sed -i.bak "s/127.0.0.1/${IP_ADDRESS}/" /etc/stanchion/vm.args
+sed -i.bak "s/-name .*/-name ${stanchion_name}@${stanchion_ip}:${stanchion_port}/" /etc/stanchion/vm.args
+sed -i /etc/stanchion/app.config -e "s/stanchion_ip,.*/stanchion_ip, \"${stanchion_ip}\"},/"
+sed -i /etc/stanchion/app.config -e "s/stanchion_port,.*/stanchion_port, ${stanchion_port}},/"
 
 # Start Stanchion
 
-if ! env | egrep -q "SEED_PORT_8080_TCP_ADDR"; then
-  exec /sbin/setuser stanchion "$(ls -d /usr/lib/stanchion/erts*)/bin/run_erl" "/tmp/stanchion" \
-     "/var/log/stanchion" "exec /usr/sbin/stanchion console"
-fi
+exec /sbin/setuser stanchion "$(ls -d /usr/lib/stanchion/erts*)/bin/run_erl" "/tmp/stanchion" \
+  "/var/log/stanchion" "exec /usr/sbin/stanchion console"
+
+serf tags -del stanchion_connect

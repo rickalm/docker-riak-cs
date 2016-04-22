@@ -1,0 +1,33 @@
+#! /bin/bash
+
+appname=riak
+
+. /etc/.docker_functions
+
+riak_ip=${RIAK_IP:-$(get_docker_container_nat_ip ${RIAK_PORT:-8087})}
+riak_port=${RIAK_PORT:-$(get_docker_container_nat_port ${RIAK_PORT:-8087})}
+riak_name=${RIAK_NAME:-riak}
+
+serf tags -set riak_connect=${riak_ip}:${riak_port}
+
+# Ensure correct ownership and permissions on volumes
+#
+chown riak:riak ${log_dir} /var/lib/riak
+chmod 755 ${log_dir} /var/lib/riak
+
+# Open file descriptor limit
+#
+ulimit -n 4096
+
+# Ensure the Erlang node name is set correctly
+#
+sed -i.bak "s/-name .*/-name ${riak_name}@${riak_ip}:${riak_port}/" /etc/riak/vm.args
+
+sed -i /etc/riak/app.config -e "s/riak_ip,.*/riak_ip, \"${riak_ip}\"},/"
+sed -i /etc/riak/app.config -e "s/riak_port,.*/riak_port, ${riak_port}},/"
+
+# Start Riak
+exec /sbin/setuser riak "$(ls -d /usr/lib/riak/erts*)/bin/run_erl" "/tmp/riak" \
+   "/var/log/riak" "exec /usr/sbin/riak console"
+
+serf tags -del riak_connect

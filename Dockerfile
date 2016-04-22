@@ -3,19 +3,6 @@
 FROM rickalm/hashicorp-serf:latest
 MAINTAINER rickalm@aol.com
 
-# Environmental variables
-
-# Make the Riak, Riak CS, and Stanchion log directories into volumes
-#
-VOLUME /var/lib/riak
-VOLUME /var/log/riak
-VOLUME /var/log/riak-cs
-VOLUME /var/log/stanchion
-
-# Open the HTTP port for Riak and Riak CS (S3)
-#
-EXPOSE 8098 8080
-
 # Install Stanchion
 #
 RUN cd /tmp \
@@ -43,10 +30,25 @@ RUN cd /tmp \
 	&& curl -so package ${S3_BUCKET}/riak-cs/${RIAK_CS_SVER}/${RIAK_CS_VER}/ubuntu/trusty/riak-cs_${RIAK_CS_VER}-1_amd64.deb \
 	&& dpkg -i "package" && rm "package"
 
+# Items for Stanchion
+#
+EXPOSE 8085
+VOLUME /var/log/stanchion
+
+# Make the Riak, Riak CS, and Stanchion log directories into volumes
+#
+VOLUME /var/lib/riak
+VOLUME /var/log/riak
+VOLUME /var/log/riak-cs
+
+# Open the HTTP port for Riak and Riak CS (S3)
+#
+EXPOSE 8098 8080
+
 # Setup start scripts for services
 #
 ADD etc /etc
-
+RUN curl -L https://github.com/rickalm/docker-tools/raw/master/.docker_functions -so /etc/.docker_functions
 
 
 
