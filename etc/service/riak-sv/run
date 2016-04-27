@@ -1,0 +1,216 @@
+#! /bin/bash
+
+appname=riak-sv
+
+. /etc/.docker_functions
+
+exec 0>&-
+exec 1>&-
+exec 1>>${log_dir}/${appname}.log
+
+trap 'shutdown_services' SIGTERM
+trap 'shutdown_services' SIGINT
+
+die() {
+  log $@
+  exit 1
+}
+
+failed_to_start() {
+  die failed to start $@
+}
+
+log() {
+  local gotone
+  while read input; do echo $(date) ${FUNCNAME[1]} $@ ${input}; gotone=yes; done
+  [ -z "${gotone}" ] && echo $(date) ${FUNCNAME[1]} $@
+}
+
+set_serf_tag() {
+  /usr/bin/serf tags -set $@ | log Set $@
+}
+
+delete_serf_tag() {
+  /usr/bin/serf tags -delete $@ | log Delete $@
+}
+
+get_serf_tag() {
+  /usr/bin/serf members -format json | jq '.members[] | select (.status == "alive") | .tags.'$1 | sed -e 's/^"//' -e 's/"$//'
+}
+
+start_riak_kv() {
+  local log_prefix=start_riak_kv
+
+  if [ "$(riak ping)" == "pong" ]; then
+    return 0
+  fi
+  
+  riak_name=${RIAK_NAME:-riak-${nodeid}}
+  riak_ip=${RIAK_IP:-$(get_docker_container_nat_ip ${RIAK_PORT:-8087})}
+
+  riak_pb_port=${RIAK_PORT:-$(get_docker_container_nat_port ${RIAK_PORT:-8087})}
+  riak_http_port=${RIAK_HTTP_PORT:-$(get_docker_container_nat_port ${RIAK_HTTP_PORT:-8098})}
+
+  riak_pb_port=${RIAK_PORT:-8087}
+  riak_http_port=${RIAK_HTTP_PORT:-8098}
+
+  # Ensure correct ownership and permissions on volumes
+  #
+  for dir in /var/log/riak /var/lib/riak /var/lib/riak/leveldb /var/lib/riak/bitcask; do
+    mkdir -p ${dir}
+    chown riak:riak ${dir}
+    chmod 755 ${dir}
+  done
+
+  # Ensure the Erlang node name is set correctly
+  #
+  sed -i /etc/riak/riak.conf -e "s/nodename .*=.*$/nodename =  ${riak_name}@${riak_ip}/"
+  sed -i /etc/riak/riak.conf -e "/^storage_backend .*=/d"
+  sed -i /etc/riak/riak.conf -e "s/listener.protobuf.internal .*=.*$/listener.protobuf.internal = 0.0.0.0:${riak_pb_port}/"
+  sed -i /etc/riak/riak.conf -e "s/listener.http.internal .*=.*$/listener.http.internal = 0.0.0.0:${riak_http_port}/"
+  echo 'buckets.default.allow_mult = true' >>/etc/riak/riak.conf
+
+  # delete our current connect tag
+  #
+  delete_serf_tag riak_name
+  delete_serf_tag riak_pb_connect
+  delete_serf_tag riak_http_connect
+
+  # Start Riak
+  #
+  /sbin/setuser riak riak start
+
+  if [ "$(riak ping)" != "pong" ]; then
+    return 1
+  fi
+
+  # If service started create our tag
+  #
+  set_serf_tag riak_name=${riak_name}@${riak_ip}
+  set_serf_tag riak_pb_connect=${riak_ip}:${riak_pb_port}
+  set_serf_tag riak_http_connect=${riak_ip}:${riak_http_port}
+
+  log Riak-KV Started
+  return 0
+}
+
+riak_kv_join_cluster() {
+  local log_prefix=riak_kv_join_cluster
+
+  if [ "$(riak ping)" != "pong" ]; then
+    log riak_kv_join_cluster expected Riak-KV to be running
+    return 1
+  fi
+
+  # Try to join existing cluster
+  #
+  #/usr/bin/serf members -tag 'riak_name=.+' -format json | \
+    #extract_from_json .members[].tags.riak_name \
+
+  my_name=$(/usr/bin/serf info -format json | extract_from_json '.agent.name')
+
+  /usr/bin/serf members -tag 'riak_name=.+' -format json | \
+    jq '.members[] | select (.name != "'${my_name}'" && .status == "alive") .tags.riak_name' | \
+    while read node; do
+      riak-admin cluster join ${node} | log trying to join ${node} to cluster : 
+    done
+
+  if [ "$(riak-admin cluster plan)" == "There are no staged changes" ]; then
+    log No changes to commit to cluster
+
+  else
+	  riak-admin cluster commit | log Cluster Commit
+
+  fi
+
+  return 0
+}
+
+start_stanchion() {
+  local log_prefix=start_stanchion
+
+  if [ "$(stanchion ping)" == "pong" ]; then
+    return 0
+  fi
+
+  get_serf_tag riak_pb_connect | log Riak_PB_Connect Tag
+  get_serf_tag stanchion_connect | log Stanchion_Connect Tag
+
+  stanchion_name=${STANCHION_NAME:-stanchion-${nodeid}}
+  stanchion_ip=${STANCHION_IP:-$(get_docker_container_nat_ip ${STANCHION_PORT:-8085})}
+  stanchion_port=${STANCHION_PORT:-$(get_docker_container_nat_port ${STANCHION_PORT:-8085})}
+
+  # Ensure correct ownership and permissions on volumes
+  #
+  for dir in /var/log/stanchion; do
+    mkdir -p ${dir}
+    chown stanchion:riak ${dir}
+    chmod 755 ${dir}
+  done
+
+  # Ensure the Erlang node name is set correctly
+  #
+  sed -i /etc/stanchion/stanchion.conf -e "s/nodename .*=.*$/nodename =  ${stanchion_name}@${stanchion_ip}/"
+  sed -i /etc/stanchion/stanchion.conf -e "s/listener .*=.*$/listener = 0.0.0.0:${stanchion_port}/"
+
+  # Start Riak
+  #
+  delete_serf_tag stanchion_connect
+  delete_serf_tag stanchion_name
+
+  /sbin/setuser stanchion stanchion start
+
+  if [ "$(stanchion ping)" != "pong" ]; then
+    log Ping Stanchion failed
+    return 1
+  fi
+
+  set_serf_tag stanchion_connect=${stanchion_ip}:${stanchion_port}
+  set_serf_tag stanchion_name=${stanchion_name}@${stanchion_ip}
+
+  log Stanchion Started
+  return 0
+}
+
+shutdown_services() {
+  log "Shutdown requested"
+
+  delete_serf_tag riakcs_connect
+  riak-cs stop | log Stop Riak-CS
+
+  delete_serf_tag stanchion_connect
+  stanchion stop | log Stop Stanchion
+
+  delete_serf_tag riak_connect
+  riak stop | log Stop Riak-KV
+
+  $(riak ertspath)/epmd -kill | log Kill EPMd
+
+  exit 0
+}
+
+log Entering Riak-SV Script
+
+nodeid=$(echo $random_key | tr -d '=/+')
+log nodeid ${nodeid}
+
+# Wait for serf to become up
+#
+while [ ! -f /etc/serf/env.sh ]; do sleep 1; done
+. /etc/serf/env.sh
+
+while /bin/true; do
+  # Try starting all processes, then sleep and try again
+  #
+  start_riak_kv || failed_to_start Riak-KV
+  start_stanchion || failed_to_start Stanchion
+  riak_kv_join_cluster || die Could not join cluster, riak isnt running
+
+  $(riak ertspath)/epmd -names | log EPMd Services
+
+  /usr/bin/serf members -format json | \
+    jq '.members[] | select (.status == "alive") | .name, .tags' | log Serf Tags
+
+  sleep 60
+done
+

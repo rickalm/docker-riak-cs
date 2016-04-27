@@ -6,8 +6,8 @@ MAINTAINER rickalm@aol.com
 # Install Stanchion
 #
 RUN cd /tmp \
-	&& STANCHION_VER=1.5.0 \
-	&& STANCHION_SVER=1.5 \
+	&& STANCHION_VER=2.1.1 \
+	&& STANCHION_SVER=2.1 \
 	&& S3_BUCKET=http://s3.amazonaws.com/downloads.basho.com \
 	&& curl -so package ${S3_BUCKET}/stanchion/${STANCHION_SVER}/${STANCHION_VER}/ubuntu/trusty/stanchion_${STANCHION_VER}-1_amd64.deb \
 	&& dpkg -i "package" && rm "package"
@@ -15,17 +15,17 @@ RUN cd /tmp \
 # Install Riak
 #
 RUN cd /tmp \
-	&& RIAK_VER=1.4.10 \
-	&& RIAK_SVER=1.4 \
+	&& RIAK_VER=2.1.4 \
+	&& RIAK_SVER=2.1 \
 	&& S3_BUCKET=http://s3.amazonaws.com/downloads.basho.com \
-	&& curl -so package ${S3_BUCKET}/riak/${RIAK_SVER}/${RIAK_VER}/ubuntu/precise/riak_${RIAK_VER}-1_amd64.deb \
+	&& curl -so package ${S3_BUCKET}/riak/${RIAK_SVER}/${RIAK_VER}/ubuntu/trusty/riak_${RIAK_VER}-1_amd64.deb \
 	&& dpkg -i "package" && rm "package"
 
 # Install Riak CS
 #
 RUN cd /tmp \
-	&& RIAK_CS_VER=1.5.2 \
-	&& RIAK_CS_SVER=1.5 \
+	&& RIAK_CS_VER=2.1.1 \
+	&& RIAK_CS_SVER=2.1 \
 	&& S3_BUCKET=http://s3.amazonaws.com/downloads.basho.com \
 	&& curl -so package ${S3_BUCKET}/riak-cs/${RIAK_CS_SVER}/${RIAK_CS_VER}/ubuntu/trusty/riak-cs_${RIAK_CS_VER}-1_amd64.deb \
 	&& dpkg -i "package" && rm "package"
@@ -50,19 +50,3 @@ EXPOSE 8098 8080
 ADD etc /etc
 RUN curl -L https://github.com/rickalm/docker-tools/raw/master/.docker_functions -so /etc/.docker_functions
 
-
-
-# Setup automatic clustering for Riak
-#ADD bin/automatic_clustering.sh /etc/my_init.d/99_automatic_clustering.sh
-
-# Tune Riak and Riak CS configuration settings for the container
-#ADD etc/riak-app.config /etc/riak/app.config
-
-#RUN sed -i.bak "s/riak_cs-VER/riak_cs-${RIAK_CS_VER}/" /etc/riak/app.config && \
-#    sed -i.bak 's/\"127.0.0.1\", 8098/\"0.0.0.0\", 8098/' /etc/riak/app.config && \
-#    sed -i.bak "s/-env ERL_MAX_PORTS 16384/-env ERL_MAX_PORTS 64000/" /etc/riak/vm.args && \
-#    sed -i.bak "s/##+zdbbl 32768/+zdbbl 96000/" /etc/riak/vm.args && \
-#    sed -i.bak "s/{cs_ip, \"127.0.0.1\"},/{cs_ip, \"0.0.0.0\"},/" /etc/riak-cs/app.config && \
-#    sed -i.bak "s/{fold_objects_for_list_keys, false},/{fold_objects_for_list_keys, true},/" /etc/riak-cs/app.config && \
-#    sed -i.bak "s/{anonymous_user_creation, false},/{anonymous_user_creation, true},/" /etc/riak-cs/app.config && \
-#    sed -i.bak "s/{stanchion_ip, \"127.0.0.1\"},/{stanchion_ip, \"0.0.0.0\"},/" /etc/stanchion/app.config

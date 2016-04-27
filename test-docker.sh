@@ -1,14 +1,24 @@
-#docker stop riak-cs 2>/dev/null
-#docker rm riak-cs 2>/dev/null
+docker ps -a | grep riak | cut -b1-20 | xargs docker rm -f
 
 /bin/true && docker run -d \
-  --net=bridge \
-  --name=riak-cs \
-  -e "DEBUG=yes" \
-  -p 41001:7946 \
-  -p 41001:7946/udp \
-  -p 8085:8085 \
+  --net=host \
+  --name=riak-01 \
+  -e "DDEBUG=yes" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  rickalm/riak-cs
+  rickalm/riak-cs \
+  && docker exec -it riak-01 /bin/bash
 
-docker exec -it riak-cs /bin/bash
+/bin/false && docker run -d \
+  --net=bridge \
+  --name=riak-02 \
+  -p 41001:7946/tcp \
+  -p 41001:7946/udp \
+  -p 8087 \
+  -p 8098 \
+  -p 8099 \
+  -p 4369 \
+  -e "DEBUG=yes" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  rickalm/riak-cs \
+  && docker exec -it riak-02 /bin/bash
+
